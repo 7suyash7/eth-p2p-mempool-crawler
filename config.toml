@@ -1,0 +1,26 @@
+# Optional: Path to the node's secret key file (hex encoded).
+# If commented out or missing, a new key will be generated.
+# node_key_file = "node.key"
+
+# P2P TCP listener address and port
+p2p_listen_addr = "0.0.0.0:30303"
+
+# Discovery v4 UDP listener address and port
+discv4_listen_addr = "0.0.0.0:30304"
+
+# Optional: List of bootnodes (enode URLs).
+# If commented out or missing, hardcoded mainnet defaults will be used.
+# bootnodes = [
+#   "enode://...",
+#   "enode://..."
+# ]
+
+# Maximum number of outgoing peer connections
+max_peers_outbound = 15
+
+# Maximum number of incoming peer connections
+max_peers_inbound = 10
+
+# Enable more verbose debug logging
+# Set to true for detailed logs, false for standard info/warn logs.
+debug_logging = false
