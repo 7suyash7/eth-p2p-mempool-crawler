@@ -1,43 +1,29 @@
-use alloy_consensus::{
-    Signed, TxEip1559, TxEip2930, TxEip4844Variant, TxEip7702, TxEnvelope, TxLegacy,
-};
-use anyhow::{Result, bail}; // Removed Chain as unused
+use crate::types::{PeerInfo, PeerUpdateData, UiUpdate};
+use anyhow::Result;
 use dashmap::DashMap;
 use reth::chainspec::ChainSpec;
-use reth::primitives::{
-    Head, PooledTransaction, Transaction, TransactionSigned,
-};
+use reth::primitives::{Head, PooledTransaction, TransactionSigned};
 use reth::revm::revm::primitives::B256;
 use reth_eth_wire::{
-    DisconnectReason, EthMessage, EthVersion, GetPooledTransactions, NewPooledTransactionHashes,
-    Transactions, // Added NewTransactions import
-    PooledTransactions, Status,
+    GetPooledTransactions, NewPooledTransactionHashes, PooledTransactions, Status,
 };
 use reth_network::p2p::error::RequestError;
-use reth_network::transactions::NetworkTransactionEvent; // Removed fetcher
+use reth_network::transactions::NetworkTransactionEvent;
 use reth_network::{NetworkHandle, PeerRequest};
 use reth_network_api::{
+    NetworkEvent, PeerId,
     events::{PeerEvent, SessionInfo},
-    NetworkEvent, PeerId // Removed PeersInfo
 };
 use std::sync::Arc;
-use std::time::Instant; // Added Instant
+use std::time::Instant;
 use tokio::spawn;
-use tokio::sync::{
-    mpsc::UnboundedSender,
-    oneshot, // Added oneshot import back
-};
+use tokio::sync::{mpsc::UnboundedSender, oneshot};
 use tracing::{debug, error, info, trace, warn};
-
-// Import shared types
-use crate::types::{PeerInfo, PeerUpdateData, UiUpdate};
-// --- End Imports ---
-
 
 // Store info about active, validated sessions
 #[derive(Debug, Clone)]
 struct PeerSessionInfo {
-    #[allow(dead_code)] // Status might be unused for now
+    #[allow(dead_code)]
     status: Arc<Status>,
     session_info: Arc<SessionInfo>,
 }
@@ -48,19 +34,18 @@ pub struct EthP2PHandler {
     chain_spec: Arc<ChainSpec>,
     network_handle: NetworkHandle,
     peers: Arc<DashMap<PeerId, PeerSessionInfo>>,
-    current_head: Head, // Still here, but ForkID check is commented out
+    current_head: Head,
     decoded_tx_sender: UnboundedSender<Arc<TransactionSigned>>,
-    ui_tx: UnboundedSender<UiUpdate>, // Already added in previous step
+    ui_tx: UnboundedSender<UiUpdate>,
 }
 
 impl EthP2PHandler {
-    // Make constructor public
     pub fn new(
         chain_spec: Arc<ChainSpec>,
         network_handle: NetworkHandle,
         initial_head: Head,
         decoded_tx_sender: UnboundedSender<Arc<TransactionSigned>>,
-        ui_tx: UnboundedSender<UiUpdate>, // Already added
+        ui_tx: UnboundedSender<UiUpdate>,
     ) -> Self {
         info!(target: "crawler::network", "Initializing EthP2PHandler.");
         Self {
@@ -73,9 +58,7 @@ impl EthP2PHandler {
         }
     }
 
-    // Keep this method internal? Or make pub if needed? Let's keep internal for now.
     pub async fn handle_network_event_wrapper(&self, event: NetworkEvent) -> Result<()> {
-        // ... (keep existing implementation) ...
         trace!(target: "crawler::handler", "**** Received NetworkEvent in Handler: {:?}", event);
         match event {
             NetworkEvent::Peer(peer_event) => {
@@ -92,7 +75,7 @@ impl EthP2PHandler {
     }
 
     pub async fn handle_peer_event(&self, event: PeerEvent) -> Result<()> {
-         match event {
+        match event {
             PeerEvent::SessionEstablished(session_info) => {
                 let peer_id = session_info.peer_id;
                 info!(target: "crawler::network", %peer_id, client=%session_info.client_version, version=%session_info.status.version, "Session established...");
@@ -102,21 +85,23 @@ impl EthP2PHandler {
                     session_info: Arc::new(session_info),
                 };
                 self.peers.insert(peer_id, peer_info_struct);
-                let connected_peers_info: Vec<PeerInfo> = self.peers.iter()
-                .map(|entry| PeerInfo {
-                    id: *entry.key(),
-                    client_version: entry.value().session_info.client_version.to_string(),
-                })
-                .collect();
+                let connected_peers_info: Vec<PeerInfo> = self
+                    .peers
+                    .iter()
+                    .map(|entry| PeerInfo {
+                        id: *entry.key(),
+                        client_version: entry.value().session_info.client_version.to_string(),
+                    })
+                    .collect();
                 info!(target: "crawler::network", %peer_id, total_peers = connected_peers_info.len(), "Validated peer added to active set.");
 
                 let update_data = PeerUpdateData {
                     connected_peers: connected_peers_info,
-                    timestamp: Instant::now()
+                    timestamp: Instant::now(),
                 };
                 debug!(target: "crawler::sender", "Sending PeerUpdate (Established): {} peers", update_data.connected_peers.len());
                 if let Err(e) = self.ui_tx.send(UiUpdate::PeerUpdate(update_data)) {
-                     warn!(target: "crawler::network", "Failed to send peer update to UI: {}", e);
+                    warn!(target: "crawler::network", "Failed to send peer update to UI: {}", e);
                 }
             }
             PeerEvent::SessionClosed { peer_id, reason } => {
@@ -125,7 +110,9 @@ impl EthP2PHandler {
                 if self.peers.remove(&peer_id).is_some() {
                     removed = true;
                 }
-                let connected_peers_info: Vec<PeerInfo> = self.peers.iter()
+                let connected_peers_info: Vec<PeerInfo> = self
+                    .peers
+                    .iter()
                     .map(|entry| PeerInfo {
                         id: *entry.key(),
                         client_version: entry.value().session_info.client_version.to_string(),
@@ -134,13 +121,13 @@ impl EthP2PHandler {
                 if removed {
                     info!(target: "crawler::network", %peer_id, total_peers = connected_peers_info.len(), "Peer removed from active set.");
                 }
-                 let update_data = PeerUpdateData {
+                let update_data = PeerUpdateData {
                     connected_peers: connected_peers_info,
-                    timestamp: Instant::now()
+                    timestamp: Instant::now(),
                 };
                 debug!(target: "crawler::sender", "Sending PeerUpdate (Closed): {} peers", update_data.connected_peers.len());
                 if let Err(e) = self.ui_tx.send(UiUpdate::PeerUpdate(update_data)) {
-                     warn!(target: "crawler::network", "Failed to send peer update to UI: {}", e);
+                    warn!(target: "crawler::network", "Failed to send peer update to UI: {}", e);
                 }
             }
             PeerEvent::PeerAdded(peer_id) => {
@@ -153,9 +140,8 @@ impl EthP2PHandler {
         Ok(())
     }
 
-    // Keep this method internal? Seems okay.
     pub async fn handle_transaction_event(&self, event: NetworkTransactionEvent) -> Result<()> {
-         match event {
+        match event {
             NetworkTransactionEvent::IncomingTransactions { peer_id, msg } => {
                 let signed_transactions = msg.0;
                 info!(target: "crawler::mempool", %peer_id, count = signed_transactions.len(), "Received full SIGNED transactions broadcast");
@@ -163,10 +149,11 @@ impl EthP2PHandler {
                 for tx_signed_arc in signed_transactions.into_iter() {
                     trace!(target: "crawler::tx", tx_hash=%tx_signed_arc.hash(), "Processing directly received TransactionSigned.");
                     let tx_to_send = tx_signed_arc.clone();
-                    if let Err(e) = sender_clone.send(tx_to_send.into()) { // Removed incorrect .into() here
+                    if let Err(e) = sender_clone.send(tx_to_send.into()) {
+                        // Removed incorrect .into() here
                         error!(target: "crawler::tx", %peer_id, "Failed to send DIRECTLY received TransactionSigned: {}. Receiver likely dropped.", e);
                     } else {
-                         debug!(target: "crawler::tx", %peer_id, tx_hash=%tx_signed_arc.hash(), "Successfully forwarded DIRECTLY received TransactionSigned to processor task.");
+                        debug!(target: "crawler::tx", %peer_id, tx_hash=%tx_signed_arc.hash(), "Successfully forwarded DIRECTLY received TransactionSigned to processor task.");
                     }
                 }
             }
@@ -196,28 +183,38 @@ impl EthP2PHandler {
                                     let pooled_tx_ref: &PooledTransaction = &pooled_tx_arc;
                                     let pooled_tx: PooledTransaction = pooled_tx_ref.clone();
                                     let tx_signed: TransactionSigned = pooled_tx.into();
-                                    if tx_signed.hash() != received_hash { // Use &received_hash
-                                         warn!(target: "crawler::tx", received_hash=%received_hash, computed_hash=%tx_signed.hash(), "Hash mismatch on requested tx!");
+                                    if tx_signed.hash() != received_hash {
+                                        warn!(target: "crawler::tx", received_hash=%received_hash, computed_hash=%tx_signed.hash(), "Hash mismatch on requested tx!");
                                     }
                                     let tx_signed_arc = Arc::new(tx_signed);
                                     if let Err(e) = sender_clone.send(tx_signed_arc) {
                                         error!(target: "crawler::tx", %peer_id, "Failed to send REQUESTED tx: {}. Receiver likely dropped.", e);
                                     } else {
-                                         debug!(target: "crawler::tx", %peer_id, tx_hash=%received_hash, "Forwarded REQUESTED tx to processor.");
+                                        debug!(target: "crawler::tx", %peer_id, tx_hash=%received_hash, "Forwarded REQUESTED tx to processor.");
                                     }
                                 }
                             }
-                            Ok(Err(req_err)) => warn!(target: "crawler::network", %peer_id, ?req_err, "GetPooledTransactions request failed"),
-                            Err(recv_err) => warn!(target: "crawler::network", %peer_id, %recv_err, "Failed to receive GetPooledTransactions response"),
+                            Ok(Err(req_err)) => {
+                                warn!(target: "crawler::network", %peer_id, ?req_err, "GetPooledTransactions request failed")
+                            }
+                            Err(recv_err) => {
+                                warn!(target: "crawler::network", %peer_id, %recv_err, "Failed to receive GetPooledTransactions response")
+                            }
                         }
                     });
                 }
             }
-            NetworkTransactionEvent::GetPooledTransactions { peer_id, request, response } => {
+            NetworkTransactionEvent::GetPooledTransactions {
+                peer_id,
+                request,
+                response,
+            } => {
                 debug!(target: "crawler::network", %peer_id, count = request.0.len(), "Ignoring incoming GetPooledTransactions request");
                 let _ = response.send(Ok(PooledTransactions(vec![])));
             }
-            _ => { debug!(target: "crawler::network", "Unhandled NetworkTransactionEvent: {:?}", event); }
+            _ => {
+                debug!(target: "crawler::network", "Unhandled NetworkTransactionEvent: {:?}", event);
+            }
         }
         Ok(())
     }

@@ -4,18 +4,13 @@ use anyhow::Result;
 use clap::Parser;
 use config::{Config as AppConfig, Environment, File as ConfigFile};
 use reth_discv4::NodeRecord;
-use reth_network::config::{rng_secret_key, SecretKey as RethSecretKey};
-use secp256k1::Secp256k1; // Keep for key generation
+use reth_network::config::{SecretKey as RethSecretKey, rng_secret_key};
+// Keep for key generation
 use serde::Deserialize;
 use std::{net::SocketAddr, path::PathBuf, str::FromStr};
 use tracing::info; // Keep for logging within this module
 use tracing_appender::rolling;
-use tracing_subscriber::{
-    fmt::{self, writer::MakeWriterExt},
-    layer::SubscriberExt,
-    util::SubscriberInitExt,
-    EnvFilter,
-};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 // --- CLI Arguments ---
 // (Kept private to this module as it's only used within load_config)
