@@ -1,20 +1,20 @@
 # Reth P2P Mempool Crawler & TUI Analyzer
 
-## 👋 Introduction
+## Introduction
 
-This project is a standalone Ethereum P2P node built entirely in Rust, designed specifically to connect directly to the Ethereum Mainnet peer-to-peer network and observe mempool activity in real-time. It leverages core networking components from the [Reth (Rust Ethereum)](https://github.com/paradigmxyz/reth) execution client to handle low-level P2P communication, discovery, and protocol handshakes.
+This project is a standalone Ethereum P2P node built entirely in Rust. It is designed specifically to connect directly to the Ethereum Mainnet peer-to-peer network and observe mempool activity in real-time. It leverages core networking components from the [Reth (Rust Ethereum)](https://github.com/paradigmxyz/reth) to handle low-level P2P communication, discovery, and protocol handshakes.
 
-Instead of relying on centralized RPC providers, this crawler talks directly to other Ethereum nodes, listens for transaction announcements (both full transactions and hashes), requests full transaction data when needed, performs basic analysis (extracting sender, value, gas info, etc.), and displays the findings in a live, updating Terminal User Interface (TUI) built with `ratatui`.
+Instead of relying on centralized RPC providers, this crawler talks directly to other peers and nodes on the network, listens for transaction announcements (both full transactions and hashes), requests full transaction data when needed, performs basic analysis (extracting sender, value, gas info, etc.), and displays the findings in a live TUI.
 
-## 🎯 Things I was trying to learn / do while building this:
+## Things I was trying to learn / do while building this:
 
-* **Deep Dive into Ethereum P2P:** To understand and interact with Ethereum's network layer (Discv4, RLPx, ETH wire protocol) directly, going beyond typical RPC interactions.
-* **Showcase Rust & Asynchronous Programming:** To demonstrate proficiency in Rust, Tokio, and asynchronous programming patterns for building robust, high-performance network applications.
-* **Explore Reth Modularity:** To learn how to integrate and utilize components from a large, real-world Rust project like Reth.
-* **Observe the Mempool:** To gain first-hand insight into mempool dynamics (transaction propagation, gas markets) without third-party dependencies.
+* **Deep Dive into Ethereum P2P and just P2P in general:** To understand and interact with Ethereum's network layer (Discv4, RLPx, ETH wire protocol) directly, going beyond typical RPC interactions.
+* **Learn more about Rust & Asynchronous Programming:** To figure out Rust's async programming patterns.
+* **Explore Reth Modularity:** It's pretty insane if you think about it, every Reth component is built to function as a standalone crate! So, I wanted to explore it a bit more in-depth.
+* **Observe the Mempool:** To gain first-hand insight into mempool (transaction propagation, gas markets) without third-party dependencies (well, except Reth).
 * **Build a Cool TUI:** To create an informative and visually engaging terminal dashboard for monitoring the network and mempool activity.
 
-## ✨ Features
+## Features
 
 * **Direct P2P Connection:** Connects to Ethereum Mainnet peers using RLPx over TCP.
 * **Peer Discovery:** Implements Discv4 UDP protocol for discovering peers, bootstrapped from known bootnodes.
@@ -26,7 +26,7 @@ Instead of relying on centralized RPC providers, this crawler talks directly to 
     * Processes `Transactions` messages (full transactions broadcast directly).
 * **Transaction Processing:** Decodes received transaction data (`PooledTransaction`, `TransactionSigned`) into the standard `reth_primitives::TransactionSigned` format.
 * **Basic Analysis:** Extracts key information like sender (via recovery), receiver, value, gas limit, gas price/fees, and transaction type.
-* **Live TUI Dashboard:** Uses `ratatui` and `crossterm` to display:
+* **Live TUI Dashboard:** The TUI displays:
     * Real-time statistics (Total Txs Seen, breakdown by type).
     * Connected peer list with client information.
     * A scrollable table showing details of the most recently observed transactions.
@@ -35,43 +35,14 @@ Instead of relying on centralized RPC providers, this crawler talks directly to 
 
 ## 📸 Demo
 
-*(Insert your awesome TUI screenshot or GIF here!)*
+#Demo-TUI:
 
-E.g.:
-![Crawler TUI Screenshot](path/to/your/screenshot.png)
+https://github.com/user-attachments/assets/65ce162f-80d8-4b8a-addf-9d9a74eba181
 
-Or:
-[![Crawler TUI Demo GIF](path/to/your/preview_static.png)](path/to/your/demo.gif)
 
-## 🛠️ Technology Stack
+#Demo-Logs:
 
-* **Core Language:** [Rust](https://www.rust-lang.org/)
-* **Asynchronous Runtime:** [Tokio](https://tokio.rs/)
-* **Ethereum P2P & Primitives:** [Reth](https://github.com/paradigmxyz/reth) Libraries:
-    * `reth-network`: Core P2P session management, RLPx transport, `NetworkManager`.
-    * `reth-discv4`: Kademlia-based Discovery v4 implementation.
-    * `reth-eth-wire`: Encoding/Decoding of ETH sub-protocol messages (`Status`, `Transactions`, `GetPooledTransactions`, etc.).
-    * `reth-primitives`: Core Ethereum data types (`TransactionSigned`, `Address`, `B256`, `Header`, `TxType`, etc.).
-    * `reth-provider` (`NoopProvider`): Used to satisfy trait bounds for network components without needing a full database provider.
-    * `reth-tasks`: Task management executor abstraction used by `NetworkManager`.
-* **Consensus/Types:** [Alloy](https://github.com/alloy-rs) Crates (pulled in via Reth):
-    * `alloy-consensus`: Ethereum transaction types (`TxEnvelope`, `TxLegacy`, `TxEip1559`, etc.) and signing logic.
-* **Terminal UI (TUI):**
-    * `ratatui`: Core TUI drawing and widget library.
-    * `crossterm`: Backend for terminal manipulation (raw mode, events, screen switching).
-* **Configuration:**
-    * `config`: Loading configuration from files and environment variables.
-    * `serde`: Serialization/Deserialization for config.
-    * `toml`: TOML file parsing (often used by `config`).
-* **CLI Arguments:** `clap`
-* **Logging:**
-    * `tracing`: Application-level logging framework.
-    * `tracing-subscriber`: Configuring log collection (`EnvFilter`, formatting).
-    * `tracing-appender`: File-based logging (rolling files).
-* **Async Utilities:** `futures-util`
-* **Error Handling:** `anyhow`
-* **Concurrency:** `dashmap` (for thread-safe peer map in handler)
-* **Number Formatting:** `num-format` (for TUI display)
+https://github.com/user-attachments/assets/cd26c0b9-7c8d-4b35-a5e0-7dfc168e2e16
 
 ## ⚙️ How It Works
 
@@ -107,12 +78,11 @@ This crawler operates as a standalone asynchronous application, leveraging sever
         * Sends a `PeerRequest::GetPooledTransactions` request back to the peer via the `NetworkHandle`.
         * Awaits the response on a `tokio::sync::oneshot` channel.
         * If successful, receives a `PooledTransactions` message containing `Vec<Arc<PooledTransaction>>`.
-        * Converts each `PooledTransaction` (the P2P enum format) to `TransactionSigned` using the `From` trait (`.into()`).
+        * Converts each `PooledTransaction` (the P2P enum format) to `TransactionSigned`.
         * Sends `Arc<TransactionSigned>` to the Processor task.
     * **Direct Broadcast:**
         * Receives `NetworkTransactionEvent::IncomingTransactions`.
-        * In this specific implementation (likely due to using `NoopProvider`), the event payload appears to already be `Vec<Arc<TransactionSigned>>`.
-        * Sends the `Arc<TransactionSigned>` directly to the Processor task (no conversion needed in this path).
+        * Sends the `Arc<TransactionSigned>` directly to the Processor task.
 
 5.  **Reth Integration:** This project *does not* run a full Reth node. Instead, it acts as a client library user:
     * It leverages `reth-network` for the complex machinery of managing multiple peer connections, RLPx encryption/framing, and handling the base P2P protocols.
@@ -125,20 +95,14 @@ This crawler operates as a standalone asynchronous application, leveraging sever
 ## 🚀 Setup & Installation
 
 1.  **Prerequisites:** Ensure you have a recent Rust toolchain installed (https://rustup.rs/).
-2.  **Clone the Repository:**
-    ```bash
-    git clone [https://github.com/YOUR_USERNAME/YOUR_REPONAME.git](https://github.com/YOUR_USERNAME/YOUR_REPONAME.git) # <-- TODO: Update URL!
-    cd YOUR_REPONAME
-    ```
-3.  **Build:** Build the release binary:
-    ```bash
-    cargo build --release
-    ```
-    The executable will be located at `target/release/eth-p2p-crawler` (or your binary name).
+2.  **Clone the Repository and just run:
+```bash
+cargo build --release
+```
 
 ## ⚙️ Configuration
 
-The crawler is configured primarily via a `config.toml` file located in the project root (or specified via the `--config-path` CLI argument). An example configuration file (`config.toml.example`) should be provided in the repository - rename it to `config.toml` to use it.
+The crawler is configured primarily via a `config.toml` file.
 
 **`config.toml` Options:**
 
@@ -164,10 +128,7 @@ The order of precedence is: CLI Arguments > Environment Variables > Config File 
 1.  Ensure you have built the project (`cargo build --release`).
 2.  Make sure you have a `config.toml` file in the working directory (or specify one with `--config-path`).
 3.  Run the executable:
-    ```bash
-    ./target/release/eth-p2p-crawler
-    ```
-    Or using cargo:
+    Using cargo:
     ```bash
     cargo run --release
     ```
@@ -175,11 +136,7 @@ The order of precedence is: CLI Arguments > Environment Variables > Config File 
 5.  Detailed logs will be written to files in the `./logs/` directory (e.g., `crawler.log.YYYY-MM-DD`).
 6.  **To Quit:** Press `q` while the TUI is focused, or send a Ctrl+C signal to the process in the terminal where you launched it.
 
-## 🚦 Status & Limitations
-
-**Status:** Beta / Proof-of-Concept. The core functionality of connecting to the P2P network, receiving/requesting mempool transactions, basic analysis, and TUI display is working.
-
-**Limitations:**
+## Limitations
 
 * **Not a Full Node:** This crawler does *not* sync the blockchain state or headers. It only observes the P2P network layer and mempool.
 * **ForkID Validation:** Currently basic. Uses a default `Head` and doesn't validate against the live chain tip, potentially allowing connections to peers on incompatible forks (though they would likely disconnect quickly).
@@ -192,23 +149,12 @@ The order of precedence is: CLI Arguments > Environment Variables > Config File 
     * Display more peer details (address, latency, protocols).
     * Implement transaction selection in the table to show full details/analysis in a separate panel.
     * Add more detailed statistics (e.g., average gas prices over time, tx throughput).
-    * Improve number formatting (especially large `U256` values).
 * [ ] **Deeper Analysis:**
     * Identify contract creation transactions explicitly.
     * Basic MEV hints (flag high priority fees, known DEX router interactions, simple sandwich/arbitrage patterns).
-    * Decode transaction input data for known contract ABIs (more advanced).
+    * Decode transaction input data for known contract ABIs.
 * [ ] **Persistence:**
     * Add option to save `TxAnalysisResult` data to a database (e.g., SQLite via `sqlx`) for historical analysis.
 * [ ] **Networking Improvements:**
     * Implement dynamic ForkID validation using periodically updated chain head info (potentially via light-client mechanisms or trusted RPC).
     * More robust peer management and scoring.
-    * Investigate providing initial peer count reliably to the TUI.
-    * Explore optimizing the `hashes.clone()` for `GetPooledTransactions`.
-* [ ] **Code Quality:**
-    * Further refactoring for clarity and maintainability.
-    * Add unit and integration tests.
-    * Improve error handling resilience.
-* [ ] **Blog Post:** Write a post detailing the project architecture, challenges, and learnings.
-
-## 📄 License
-This project is licensed under the [MIT License](LICENSE-MIT.txt) or the [Apache License 2.0](LICENSE-APACHE.txt), at your option.
