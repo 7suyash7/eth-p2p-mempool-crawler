@@ -1,12 +1,18 @@
-# Reth P2P Mempool Crawler & TUI Analyzer
+# Ethereum P2P Mempool Crawler (Reth-based)
 
 ## Introduction
 
-This project is a standalone Ethereum P2P node built entirely in Rust. It is designed specifically to connect directly to the Ethereum Mainnet peer-to-peer network and observe mempool activity in real-time. It leverages core networking components from the [Reth (Rust Ethereum)](https://github.com/paradigmxyz/reth) to handle low-level P2P communication, discovery, and protocol handshakes.
+This project is a standalone Ethereum P2P node built entirely in Rust. It is designed specifically to connect directly to the Ethereum Mainnet peer-to-peer network and observe mempool activity in real-time. It leverages core networking components from [Reth (Rust Ethereum)](https://github.com/paradigmxyz/reth) to handle low-level P2P communication, discovery, and protocol handshakes.
 
 Instead of relying on centralized RPC providers, this crawler talks directly to other peers and nodes on the network, listens for transaction announcements (both full transactions and hashes), requests full transaction data when needed, performs basic analysis (extracting sender, value, gas info, etc.), and displays the findings in a live TUI.
 
-## Things I was trying to learn / do while building this:
+## Demo-TUI
+
+https://github.com/user-attachments/assets/65ce162f-80d8-4b8a-addf-9d9a74eba181
+
+A small note here, it says 0 peers because while testing I connected to a kind peer who keeps sending me transactions and I haven't yet implemented the logic to show data about peers who already connected to us. Also, it takes a bit for peers to connect to you, so be patient and let it run for a while, maybe half an hour!
+
+## Things I was trying to learn/do while building this:
 
 * **Deep Dive into Ethereum P2P and just P2P in general:** To understand and interact with Ethereum's network layer (Discv4, RLPx, ETH wire protocol) directly, going beyond typical RPC interactions.
 * **Learn more about Rust & Asynchronous Programming:** To figure out Rust's async programming patterns.
@@ -33,14 +39,7 @@ Instead of relying on centralized RPC providers, this crawler talks directly to 
 * **Configuration:** Uses a `config.toml` file for settings like listener addresses, peer limits, node key path, and logging verbosity (with CLI overrides).
 * **File Logging:** Outputs detailed operational logs to `./logs/crawler.log` using `tracing`.
 
-## 📸 Demo
-
-#Demo-TUI:
-
-https://github.com/user-attachments/assets/65ce162f-80d8-4b8a-addf-9d9a74eba181
-
-
-#Demo-Logs:
+## Demo-Logs:
 
 https://github.com/user-attachments/assets/cd26c0b9-7c8d-4b35-a5e0-7dfc168e2e16
 
