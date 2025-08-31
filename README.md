@@ -39,9 +39,45 @@ A small note here, it says 0 peers because while testing I connected to a kind p
 * **Configuration:** Uses a `config.toml` file for settings like listener addresses, peer limits, node key path, and logging verbosity (with CLI overrides).
 * **File Logging:** Outputs detailed operational logs to `./logs/crawler.log` using `tracing`.
 
-## Demo-Logs:
+## 📸 Demo
 
-https://github.com/user-attachments/assets/cd26c0b9-7c8d-4b35-a5e0-7dfc168e2e16
+*(Insert your awesome TUI screenshot or GIF here!)*
+
+E.g.:
+![Crawler TUI Screenshot](path/to/your/screenshot.png)
+
+Or:
+[![Crawler TUI Demo GIF](path/to/your/preview_static.png)](path/to/your/demo.gif)
+
+## 🛠️ Technology Stack
+
+* **Core Language:** [Rust](https://www.rust-lang.org/)
+* **Asynchronous Runtime:** [Tokio](https://tokio.rs/)
+* **Ethereum P2P & Primitives:** [Reth](https://github.com/paradigmxyz/reth) Libraries:
+    * `reth-network`: Core P2P session management, RLPx transport, `NetworkManager`.
+    * `reth-discv4`: Kademlia-based Discovery v4 implementation.
+    * `reth-eth-wire`: Encoding/Decoding of ETH sub-protocol messages (`Status`, `Transactions`, `GetPooledTransactions`, etc.).
+    * `reth-primitives`: Core Ethereum data types (`TransactionSigned`, `Address`, `B256`, `Header`, `TxType`, etc.).
+    * `reth-provider` (`NoopProvider`): Used to satisfy trait bounds for network components without needing a full database provider.
+    * `reth-tasks`: Task management executor abstraction used by `NetworkManager`.
+* **Consensus/Types:** [Alloy](https://github.com/alloy-rs) Crates (pulled in via Reth):
+    * `alloy-consensus`: Ethereum transaction types (`TxEnvelope`, `TxLegacy`, `TxEip1559`, etc.) and signing logic.
+* **Terminal UI (TUI):**
+    * `ratatui`: Core TUI drawing and widget library.
+    * `crossterm`: Backend for terminal manipulation (raw mode, events, screen switching).
+* **Configuration:**
+    * `config`: Loading configuration from files and environment variables.
+    * `serde`: Serialization/Deserialization for config.
+    * `toml`: TOML file parsing (often used by `config`).
+* **CLI Arguments:** `clap`
+* **Logging:**
+    * `tracing`: Application-level logging framework.
+    * `tracing-subscriber`: Configuring log collection (`EnvFilter`, formatting).
+    * `tracing-appender`: File-based logging (rolling files).
+* **Async Utilities:** `futures-util`
+* **Error Handling:** `anyhow`
+* **Concurrency:** `dashmap` (for thread-safe peer map in handler)
+* **Number Formatting:** `num-format` (for TUI display)
 
 ## ⚙️ How It Works
 

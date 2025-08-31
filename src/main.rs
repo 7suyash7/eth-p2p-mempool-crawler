@@ -41,7 +41,6 @@ async fn main() -> Result<()> {
     info!("🚀 Starting Ethereum P2P Crawler...");
     info!("Loaded configuration: {:?}", app_config);
 
-    // --- Key Management ---
     let secret_key: RethSecretKey = load_or_generate_key(app_config.node_key_file.clone())?; // Clone Option<PathBuf>
     let secp = Secp256k1::new();
     let public_key = secret_key.public_key(&secp);
@@ -49,11 +48,9 @@ async fn main() -> Result<()> {
     let our_peer_id: PeerId = B512::from_slice(&serialized_pk_bytes[1..65]);
     info!("🔑 Our Peer ID: {}", our_peer_id);
 
-    // --- Chain Specification ---
     let chain_spec: Arc<ChainSpec> = MAINNET.clone();
     info!("⛓️ Using Chain Spec: {}", chain_spec.chain);
 
-    // --- Bootnodes ---
     let bootnodes: Vec<NodeRecord> = parse_bootnodes(app_config.bootnodes.clone())?;
     if bootnodes.is_empty() {
         warn!("No bootnodes specified or found! Peer discovery might fail.");
@@ -61,13 +58,11 @@ async fn main() -> Result<()> {
         info!("🌳 Using {} bootnodes", bootnodes.len());
     }
 
-    // --- Task Executor ---
     let tokio_handle = tokio::runtime::Handle::current();
     let task_manager = TaskManager::new(tokio_handle);
     let executor = task_manager.executor();
     info!("Task executor created.");
 
-    // --- Build Network Components ---
     let mut discv4_builder = Discv4ConfigBuilder::default();
     discv4_builder.add_boot_nodes(bootnodes.clone());
     info!("🔍 Discv4 behaviour configured.");
@@ -92,14 +87,12 @@ async fn main() -> Result<()> {
         app_config.p2p_listen_addr, app_config.discv4_listen_addr
     );
 
-    // --- Create Communication Channels ---
     let (tx_event_sender, mut tx_event_receiver) =
         mpsc::unbounded_channel::<NetworkTransactionEvent>();
     let (decoded_tx_sender, mut decoded_tx_receiver) =
         mpsc::unbounded_channel::<Arc<TransactionSigned>>();
     let (ui_tx, ui_rx) = mpsc::unbounded_channel::<UiUpdate>();
 
-    // --- Initialize Network Manager ---
     let mut network_manager = NetworkManager::new(network_config).await?;
     network_manager.set_transactions(tx_event_sender);
     let network_handle = network_manager.handle().clone();
@@ -108,7 +101,6 @@ async fn main() -> Result<()> {
         network_handle.num_connected_peers()
     );
 
-    // --- Initialize Custom P2P Handler ---
     let initial_head = Head::default();
     let event_handler = EthP2PHandler::new(
         chain_spec.clone(),
@@ -119,10 +111,8 @@ async fn main() -> Result<()> {
     );
     let handler_arc = Arc::new(event_handler);
 
-    // --- Spawn Core Tasks ---
     let task_executor = &executor;
 
-    // 1. Event Handler Task
     let handler_clone_for_events = Arc::clone(&handler_arc);
     task_executor.spawn(Box::pin(async move {
         info!(target: "crawler::events", "EVENT HANDLER TASK STARTED");
@@ -144,7 +134,6 @@ async fn main() -> Result<()> {
     }));
     info!("Spawned Peer Event Handler task.");
 
-    // 2. Transaction Event Handler Task
     let handler_clone_for_tx = Arc::clone(&handler_arc);
     task_executor.spawn(Box::pin(async move {
         info!(target: "crawler::tx", "TX HANDLER TASK STARTED");
@@ -161,7 +150,6 @@ async fn main() -> Result<()> {
     }));
     info!("Spawned Transaction Event Handler task.");
 
-    // 3. Decoded Transaction Processor Task
     let processor_ui_tx = ui_tx.clone();
     task_executor.spawn(Box::pin(async move {
         info!(target: "crawler::processor", "Starting decoded transaction processor task...");
@@ -179,15 +167,13 @@ async fn main() -> Result<()> {
     }));
     info!("Spawned Decoded Transaction Processor task.");
 
-    // 4. Core Network Task
     let network_manager_handle = task_executor.spawn(Box::pin(async move {
         info!(target: "crawler::netmgr", "Starting core network task...");
-        network_manager.await; // Drive the NetworkManager event loop
+        network_manager.await;
         error!(target: "crawler::netmgr", "Core network task finished unexpectedly!");
     }));
     info!("Spawned Core Network task.");
 
-    // 5. UI Task
     let ui_task_handle = task_executor.spawn(Box::pin(async move {
         info!(target: "crawler::ui", "UI TASK STARTED");
         if let Err(e) = run_ui(ui_rx).await {
@@ -197,12 +183,10 @@ async fn main() -> Result<()> {
     }));
     info!("Spawned UI task.");
 
-    // --- Keep Alive & Handle Shutdown ---
     info!("✅ Crawler is running! Press Ctrl+C to shut down.");
     signal::ctrl_c().await?; // Wait for Ctrl+C
     info!("🛑 Ctrl+C received, initiating shutdown...");
 
-    // Send shutdown signal to UI task first
     if let Err(e) = ui_tx.send(UiUpdate::Shutdown) {
         error!(target: "crawler::main", "Failed to send shutdown signal to UI task: {}", e);
     }

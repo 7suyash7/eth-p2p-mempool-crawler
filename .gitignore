@@ -1,0 +1,18 @@
+/target
+# Logs
+/logs/
+
+# macOS specific
+.DS_Store
+
+# Ignore build artifacts and dependencies
+/target/
+debug/
+*.rs.bk
+
+# Demo videos
+*.mp4
+
+# Editor-specific files
+.vscode/
+.idea/

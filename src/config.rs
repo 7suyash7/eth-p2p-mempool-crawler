@@ -1,19 +1,14 @@
-//! Configuration loading and setup helpers.
-
 use anyhow::Result;
 use clap::Parser;
 use config::{Config as AppConfig, Environment, File as ConfigFile};
 use reth_discv4::NodeRecord;
 use reth_network::config::{SecretKey as RethSecretKey, rng_secret_key};
-// Keep for key generation
 use serde::Deserialize;
 use std::{net::SocketAddr, path::PathBuf, str::FromStr};
 use tracing::info; // Keep for logging within this module
 use tracing_appender::rolling;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
-// --- CLI Arguments ---
-// (Kept private to this module as it's only used within load_config)
 #[derive(Parser, Debug)]
 #[clap(
     name = "eth-p2p-crawler",
@@ -45,9 +40,7 @@ struct CliArgs {
     config_path: PathBuf,
 }
 
-// --- Configuration Struct ---
-// (Make fields pub that need to be accessed from main.rs)
-#[derive(Deserialize, Debug, Clone)] // Added Clone for simplicity if needed later
+#[derive(Deserialize, Debug, Clone)]
 pub struct Config {
     pub node_key_file: Option<PathBuf>,
     pub p2p_listen_addr: SocketAddr,
@@ -58,18 +51,13 @@ pub struct Config {
     pub debug_logging: bool,
 }
 
-/// Loads configuration from file, environment variables, and CLI arguments.
 pub fn load_config() -> Result<Config> {
     let cli_args = CliArgs::parse();
 
     let config_builder = AppConfig::builder()
-        // Load from specified config file (or default "config.toml")
-        // Make it optional so the app can run without a config file
         .add_source(ConfigFile::from(cli_args.config_path.clone()).required(false))
-        // Load environment variables (e.g., CRAWLER_P2P_LISTEN_ADDR)
         .add_source(Environment::with_prefix("CRAWLER").separator("_"));
 
-    // Apply CLI overrides - this takes precedence
     let config_builder = if let Some(addr) = cli_args.p2p_listen_addr {
         config_builder.set_override("p2p_listen_addr", addr.to_string())?
     } else {
@@ -86,21 +74,16 @@ pub fn load_config() -> Result<Config> {
         config_builder
     };
 
-    // Build the final configuration source
     let settings = config_builder
-        // Add default values directly here for required fields if file doesn't exist
         .set_default("p2p_listen_addr", "0.0.0.0:30303")?
         .set_default("discv4_listen_addr", "0.0.0.0:30304")?
         .set_default("max_peers_outbound", 15)?
         .set_default("max_peers_inbound", 10)?
         .set_default("debug_logging", false)?
-        // Optionals don't need defaults set here if handled later
         .build()?;
 
-    // Deserialize into our Config struct
     let mut app_config: Config = settings.try_deserialize()?;
 
-    // Handle optional overrides from CLI that weren't easy with set_override
     if cli_args.node_key_file.is_some() {
         app_config.node_key_file = cli_args.node_key_file;
     }
@@ -111,7 +94,6 @@ pub fn load_config() -> Result<Config> {
     Ok(app_config)
 }
 
-/// Sets up logging to a daily rolling file.
 pub fn setup_logging(debug_logging: bool) {
     let log_file = rolling::daily("./logs", "crawler.log"); // Log to ./logs/ dir
 
@@ -134,14 +116,12 @@ pub fn setup_logging(debug_logging: bool) {
         )
         .init();
 
-    // This log goes to the file now
     info!(
         "Logging initialized (debug={}, outputting to ./logs/crawler.log)",
         debug_logging
     );
 }
 
-/// Loads a node key from file or generates a new one.
 pub fn load_or_generate_key(file_path: Option<PathBuf>) -> Result<RethSecretKey> {
     if let Some(path) = file_path {
         info!("🔑 Loading node key from file: {:?}", path);
@@ -153,12 +133,10 @@ pub fn load_or_generate_key(file_path: Option<PathBuf>) -> Result<RethSecretKey>
             .map_err(|e| anyhow::anyhow!("Invalid key data in file {:?}: {}", path, e))
     } else {
         info!("🔑 Node key file not provided, generating a new random key.");
-        // Maybe save the generated key to a default file? Optional improvement.
         Ok(rng_secret_key())
     }
 }
 
-/// Parses bootnode strings or returns defaults.
 pub fn parse_bootnodes(nodes_config: Option<Vec<String>>) -> Result<Vec<NodeRecord>> {
     let nodes_to_parse = match nodes_config {
         Some(nodes) if !nodes.is_empty() => {

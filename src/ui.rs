@@ -190,7 +190,6 @@ fn draw_frame(f: &mut Frame, app_state: &mut AppState) {
         )
         .split(f.area());
 
-    // --- 1. Stats Panel ---
     let stats_content = vec![
         Line::from(Span::styled("Total Txs Seen:", Style::default().bold())),
         Line::from(format!(
@@ -223,7 +222,6 @@ fn draw_frame(f: &mut Frame, app_state: &mut AppState) {
         .block(Block::default().title("📊 Stats").borders(Borders::ALL));
     f.render_widget(stats_paragraph, main_chunks[0]);
 
-    // --- 2. Peer Panel ---
     let peer_items: Vec<ListItem> = app_state
         .peers
         .iter()
@@ -249,7 +247,6 @@ fn draw_frame(f: &mut Frame, app_state: &mut AppState) {
 
     f.render_widget(peers_list, main_chunks[1]);
 
-    // --- 3. Transaction Table ---
     let header_cells = [
         "Hash",
         "Type",

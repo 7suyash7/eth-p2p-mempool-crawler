@@ -35,7 +35,6 @@ pub fn analyze_transaction(tx_signed: &TransactionSigned) -> TxAnalysisResult {
     let input_len = tx_signed.input().len();
     let tx_type = tx_signed.tx_type();
 
-    // Use inner enum ref just for matching logic
     let unsigned_tx_enum = &tx_signed.transaction();
 
     let (gas_price_or_max_fee, max_priority_fee) = match unsigned_tx_enum {
