@@ -20,7 +20,6 @@ use tokio::spawn;
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
 use tracing::{debug, error, info, trace, warn};
 
-// Store info about active, validated sessions
 #[derive(Debug, Clone)]
 struct PeerSessionInfo {
     #[allow(dead_code)]
@@ -28,7 +27,6 @@ struct PeerSessionInfo {
     session_info: Arc<SessionInfo>,
 }
 
-// Make the handler public
 #[derive(Debug)]
 pub struct EthP2PHandler {
     chain_spec: Arc<ChainSpec>,
@@ -66,9 +64,6 @@ impl EthP2PHandler {
             }
             NetworkEvent::ActivePeerSession { info, .. } => {
                 debug!(target: "crawler::network", peer_id=%info.peer_id, "Session confirmed active.");
-            }
-            _ => {
-                debug!(target: "crawler::network", "Unhandled NetworkEvent variant: {:?}", event);
             }
         }
         Ok(())
@@ -150,7 +145,6 @@ impl EthP2PHandler {
                     trace!(target: "crawler::tx", tx_hash=%tx_signed_arc.hash(), "Processing directly received TransactionSigned.");
                     let tx_to_send = tx_signed_arc.clone();
                     if let Err(e) = sender_clone.send(tx_to_send.into()) {
-                        // Removed incorrect .into() here
                         error!(target: "crawler::tx", %peer_id, "Failed to send DIRECTLY received TransactionSigned: {}. Receiver likely dropped.", e);
                     } else {
                         debug!(target: "crawler::tx", %peer_id, tx_hash=%tx_signed_arc.hash(), "Successfully forwarded DIRECTLY received TransactionSigned to processor task.");
@@ -164,7 +158,7 @@ impl EthP2PHandler {
                 };
                 info!(target: "crawler::mempool", %peer_id, count = hashes.len(), "Received transaction hashes broadcast");
                 if !hashes.is_empty() {
-                    let request_payload = GetPooledTransactions(hashes.clone()); // Keep clone for now
+                    let request_payload = GetPooledTransactions(hashes.clone());
                     let (response_tx, response_rx) =
                         oneshot::channel::<Result<PooledTransactions, RequestError>>();
                     let peer_request = PeerRequest::GetPooledTransactions {

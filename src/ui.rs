@@ -82,7 +82,7 @@ pub async fn run_ui(mut ui_rx: UnboundedReceiver<UiUpdate>) -> Result<()> {
     app_state.last_update = Instant::now();
 
     loop {
-        terminal.draw(|f| draw_frame(f, &mut app_state))?; // Pass mutable state
+        terminal.draw(|f| draw_frame(f, &mut app_state))?;
 
         if event::poll(Duration::from_millis(50))? {
             if let CrosstermEvent::Key(key) = event::read()? {

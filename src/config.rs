@@ -5,7 +5,7 @@ use reth_discv4::NodeRecord;
 use reth_network::config::{SecretKey as RethSecretKey, rng_secret_key};
 use serde::Deserialize;
 use std::{net::SocketAddr, path::PathBuf, str::FromStr};
-use tracing::info; // Keep for logging within this module
+use tracing::info;
 use tracing_appender::rolling;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -100,7 +100,7 @@ pub fn load_config() -> Result<Config> {
 }
 
 pub fn setup_logging(debug_logging: bool) {
-    let log_file = rolling::daily("./logs", "crawler.log"); // Log to ./logs/ dir
+    let log_file = rolling::daily("./logs", "crawler.log");
 
     let default_filter = if debug_logging {
         "eth_p2p_crawler=debug,reth_network=info,reth_discv4=info,reth_eth_wire=debug,reth_network::transactions=trace,crawler=trace"

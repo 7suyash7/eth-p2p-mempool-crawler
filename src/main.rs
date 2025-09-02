@@ -7,7 +7,7 @@ mod types;
 mod ui;
 
 use crate::{
-    api::create_router,
+    api::{create_router, AppState, ApiTransaction},
     config::{load_config, load_or_generate_key, parse_bootnodes, setup_logging},
     network::EthP2PHandler,
     types::UiUpdate,
@@ -31,7 +31,7 @@ use secp256k1::Secp256k1;
 use std::sync::Arc;
 use tokio::{
     signal,
-    sync::mpsc::{self},
+    sync::{broadcast, mpsc::{self}},
 };
 use tracing::{error, info, trace, warn};
 
@@ -43,6 +43,11 @@ async fn main() -> Result<()> {
     println!("Loaded configuration: {:?}", app_config);
 
     let db_pool = db::create_pool(&app_config.database_url).await?;
+    let (tx_broadcaster, _)  = broadcast::channel::<String>(100);
+    let app_state = Arc::new(AppState {
+        tx_broadcaster: tx_broadcaster.clone(),
+        db_pool: db_pool.clone(),
+    });
 
     let secret_key: RethSecretKey = load_or_generate_key(app_config.node_key_file.clone())?;
     let secp = Secp256k1::new();
@@ -172,17 +177,22 @@ async fn main() -> Result<()> {
 
     let writer_ui_tx = ui_tx.clone();
     let db_pool_clone = db_pool.clone();
+    let broadcaster = tx_broadcaster.clone();
     task_executor.spawn(Box::pin(async move {
         info!(target: "crawler::db-writer", "Starting database writer task...");
         while let Some(tx) = db_writer_rx.recv().await {
-            let hash_str = tx.hash.to_string();
-            let sender_str = tx.sender.map(|s| s.to_string());
-            let receiver_str = tx.receiver.map(|r| r.to_string());
-
-            let value_str = tx.value.to_string();
-
-            let gas_price_str = tx.gas_price_or_max_fee.map(|p| p.to_string());
-            let max_prio_fee_str = tx.max_priority_fee.map(|p| p.to_string());
+            let api_tx = ApiTransaction {
+                hash: tx.hash.to_string(),
+                tx_type: tx.tx_type as i16,
+                sender: tx.sender.map(|s| s.to_string()),
+                receiver: tx.receiver.map(|r| r.to_string()),
+                value_wei: tx.value.to_string(),
+                gas_limit: tx.gas_limit as i64,
+                gas_price_or_max_fee_wei: tx.gas_price_or_max_fee.map(|p| p.to_string()),
+                max_priority_fee_wei: tx.max_priority_fee.map(|p| p.to_string()),
+                input_len: tx.input_len as i32,
+                first_seen_at: tx.first_seen_at,
+            };
 
             let query_result = sqlx::query!(
                 r#"
@@ -190,29 +200,34 @@ async fn main() -> Result<()> {
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                 ON CONFLICT (hash) DO NOTHING
                 "#,
-                hash_str,
-                tx.tx_type as i16,
-                sender_str,
-                receiver_str,
-                value_str,
-                tx.gas_limit as i64,
-                gas_price_str,
-                max_prio_fee_str,
-                tx.input_len as i32,
-                tx.first_seen_at
+                api_tx.hash,
+                api_tx.tx_type,
+                api_tx.sender,
+                api_tx.receiver,
+                api_tx.value_wei,
+                api_tx.gas_limit,
+                api_tx.gas_price_or_max_fee_wei,
+                api_tx.max_priority_fee_wei,
+                api_tx.input_len,
+                api_tx.first_seen_at
             )
             .execute(&db_pool_clone)
             .await;
 
             if let Err(e) = query_result {
-                warn!(target: "crawler::db-writer", "Failed to write tx {} to DB: {}", hash_str, e);
+                warn!(target: "crawler::db-writer", "Failed to write tx {} to DB: {}", api_tx.hash, e);
             }
 
-            if let Err(e) = writer_ui_tx.send(UiUpdate::NewTx(Box::new(tx))) {
-                error!(target: "crawler::db-writer", "Failed to send tx update to UI: {}. Receiver likely dropped.", e);        
+            if let Ok(tx_json) = serde_json::to_string(&api_tx) {
+                if broadcaster.send(tx_json).is_err() {
+                    trace!(target: "crawler::broadcaster", "No active WebSocket clients to broadcast to");
+                }
+            }
+
+            if writer_ui_tx.send(UiUpdate::NewTx(Box::new(tx))).is_err() {
+                error!(target: "crawler::db-writer", "Failed to send tx update to UI: receiver dropped.");
             }
         }
-    info!(target: "crawler::db-writer", "Database writer task finished.");
     }));
     info!("Spawned Database Writer task.");
 
@@ -232,22 +247,13 @@ async fn main() -> Result<()> {
     }));
     info!("Spawned UI task.");
 
-    let api_db_pool = db_pool.clone();
     task_executor.spawn(Box::pin(async move {
-        let app_router = create_router(api_db_pool);
-        match tokio::net::TcpListener::bind("0.0.0.0:8000").await {
-            Ok(listener) => {
-                println!("✅ API server listening on http://0.0.0.0:8000");
-                if let Err(e) = axum::serve(listener, app_router).await {
-                    eprintln!("API server error: {}", e);
-                }
-            }
-            Err(e) => {
-                eprintln!("Failed to bind API server to port 8000: {}", e);
-            }
-        }
+        let app_router = create_router(app_state); 
+        let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await.unwrap();
+        info!(target: "crawler::api", "✅ API server listening on http://0.0.0.0:8000");
+        axum::serve(listener, app_router).await.unwrap();
     }));
-    println!("Spawned API Server task.");
+    info!("Spawned API Server task.");
 
     info!("✅ Crawler is running! Press Ctrl+C to shut down.");
     signal::ctrl_c().await?;

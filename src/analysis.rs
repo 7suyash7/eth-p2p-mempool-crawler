@@ -1,5 +1,4 @@
 use alloy_consensus::Transaction as AlloyTransactionTrait;
-use alloy_consensus::transaction::SignerRecoverable;
 use chrono::{DateTime, Utc};
 use reth::revm::revm::primitives::{Address, B256, U256};
 use reth_primitives::{
