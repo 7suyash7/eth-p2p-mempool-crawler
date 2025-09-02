@@ -9,7 +9,7 @@ p2p_listen_addr = "0.0.0.0:30303"
 discv4_listen_addr = "0.0.0.0:30304"
 
 # Database connection URL
-database_url = "postgres://user:password@localhost/mempool"
+database_url = "postgres://ethcrawler:suyash@localhost/mempool"
 
 # Optional: List of bootnodes (enode URLs).
 # If commented out or missing, hardcoded mainnet defaults will be used.

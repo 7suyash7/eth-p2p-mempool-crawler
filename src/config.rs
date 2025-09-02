@@ -42,6 +42,7 @@ struct CliArgs {
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
+    pub database_url: String,
     pub node_key_file: Option<PathBuf>,
     pub p2p_listen_addr: SocketAddr,
     pub discv4_listen_addr: SocketAddr,
@@ -80,6 +81,10 @@ pub fn load_config() -> Result<Config> {
         .set_default("max_peers_outbound", 15)?
         .set_default("max_peers_inbound", 10)?
         .set_default("debug_logging", false)?
+        .set_default(
+            "database_url",
+            "postgres://ethcrawler:suyash@localhost/mempool",
+        )?
         .build()?;
 
     let mut app_config: Config = settings.try_deserialize()?;
