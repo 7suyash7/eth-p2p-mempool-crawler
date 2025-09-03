@@ -1,10 +1,8 @@
 use alloy_consensus::Transaction as AlloyTransactionTrait;
 use chrono::{DateTime, Utc};
 use reth::revm::revm::primitives::{Address, B256, U256};
-use reth_primitives::{
-    Transaction as RethTransactionEnum, TransactionSigned, TxType,
-};
 use reth_primitives::transaction::SignedTransaction;
+use reth_primitives::{Transaction as RethTransactionEnum, TransactionSigned, TxType};
 use tracing::warn;
 
 #[derive(Debug, Clone)]
@@ -19,6 +17,7 @@ pub struct TxAnalysisResult {
     pub max_priority_fee: Option<u128>,
     pub input_len: usize,
     pub first_seen_at: DateTime<Utc>,
+    pub is_private: bool,
 }
 
 pub fn analyze_transaction(tx_signed: &TransactionSigned) -> TxAnalysisResult {
@@ -63,5 +62,6 @@ pub fn analyze_transaction(tx_signed: &TransactionSigned) -> TxAnalysisResult {
         max_priority_fee,
         input_len,
         first_seen_at: Utc::now(),
+        is_private: false,
     }
 }

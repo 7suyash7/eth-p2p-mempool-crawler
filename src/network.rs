@@ -2,11 +2,13 @@ use crate::types::{PeerInfo, PeerUpdateData, UiUpdate};
 use anyhow::Result;
 use dashmap::DashMap;
 use reth::chainspec::ChainSpec;
-use reth::primitives::{Head, PooledTransaction, TransactionSigned};
+use reth::primitives::{Block, Head, PooledTransaction, TransactionSigned};
 use reth::revm::revm::primitives::B256;
 use reth_eth_wire::{
-    GetPooledTransactions, NewPooledTransactionHashes, PooledTransactions, Status,
+    EthMessage, GetPooledTransactions, NewBlock, NewBlockHashes, NewPooledTransactionHashes,
+    PooledTransactions, Status,
 };
+use reth_network::import::NewBlockEvent;
 use reth_network::p2p::error::RequestError;
 use reth_network::transactions::NetworkTransactionEvent;
 use reth_network::{NetworkHandle, PeerRequest};
@@ -34,6 +36,7 @@ pub struct EthP2PHandler {
     peers: Arc<DashMap<PeerId, PeerSessionInfo>>,
     current_head: Head,
     decoded_tx_sender: UnboundedSender<Arc<TransactionSigned>>,
+    block_sender: UnboundedSender<Block>,
     ui_tx: UnboundedSender<UiUpdate>,
 }
 
@@ -43,6 +46,7 @@ impl EthP2PHandler {
         network_handle: NetworkHandle,
         initial_head: Head,
         decoded_tx_sender: UnboundedSender<Arc<TransactionSigned>>,
+        block_sender: UnboundedSender<Block>,
         ui_tx: UnboundedSender<UiUpdate>,
     ) -> Self {
         info!(target: "crawler::network", "Initializing EthP2PHandler.");
@@ -52,20 +56,24 @@ impl EthP2PHandler {
             peers: Arc::new(DashMap::new()),
             current_head: initial_head,
             decoded_tx_sender,
+            block_sender,
             ui_tx,
         }
     }
 
     pub async fn handle_network_event_wrapper(&self, event: NetworkEvent) -> Result<()> {
         trace!(target: "crawler::handler", "**** Received NetworkEvent in Handler: {:?}", event);
+
         match event {
             NetworkEvent::Peer(peer_event) => {
                 self.handle_peer_event(peer_event).await?;
             }
+
             NetworkEvent::ActivePeerSession { info, .. } => {
                 debug!(target: "crawler::network", peer_id=%info.peer_id, "Session confirmed active.");
             }
         }
+
         Ok(())
     }
 

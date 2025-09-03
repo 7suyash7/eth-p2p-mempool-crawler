@@ -3,13 +3,15 @@ mod api;
 mod config;
 mod db;
 mod network;
+mod oracle;
 mod types;
 mod ui;
 
 use crate::{
-    api::{create_router, AppState, ApiTransaction},
+    api::{ApiTransaction, AppState, create_router},
     config::{load_config, load_or_generate_key, parse_bootnodes, setup_logging},
     network::EthP2PHandler,
+    oracle::GasOracle,
     types::UiUpdate,
     ui::run_ui,
 };
@@ -17,21 +19,27 @@ use anyhow::Result;
 use futures_util::StreamExt;
 use reth::chainspec::{ChainSpec, MAINNET};
 use reth::network::transactions::NetworkTransactionEvent;
-use reth::revm::revm::primitives::alloy_primitives::B512;
+use reth_network::import::NewBlockEvent;
+use reth::revm::revm::primitives::alloy_primitives::{B256, B512};
 use reth_discv4::{Discv4ConfigBuilder, NatResolver, NodeRecord};
 use reth_network::{
     EthNetworkPrimitives, NetworkConfigBuilder, NetworkEventListenerProvider, NetworkManager,
     PeersConfig, PeersInfo, config::SecretKey as RethSecretKey,
 };
 use reth_network_api::PeerId;
-use reth_primitives::{Head, TransactionSigned};
+use reth_primitives::{Block, Head, TransactionSigned};
 use reth_provider::noop::NoopProvider;
 use reth_tasks::TaskManager;
 use secp256k1::Secp256k1;
+use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::{
     signal,
-    sync::{broadcast, mpsc::{self}},
+    sync::{
+        RwLock, broadcast,
+        mpsc::{self},
+    },
 };
 use tracing::{error, info, trace, warn};
 
@@ -43,10 +51,13 @@ async fn main() -> Result<()> {
     println!("Loaded configuration: {:?}", app_config);
 
     let db_pool = db::create_pool(&app_config.database_url).await?;
-    let (tx_broadcaster, _)  = broadcast::channel::<String>(100);
+    let (tx_broadcaster, _) = broadcast::channel::<String>(100);
+    let gas_oracle = Arc::new(GasOracle::new());
+
     let app_state = Arc::new(AppState {
         tx_broadcaster: tx_broadcaster.clone(),
         db_pool: db_pool.clone(),
+        gas_oracle: gas_oracle.clone(),
     });
 
     let secret_key: RethSecretKey = load_or_generate_key(app_config.node_key_file.clone())?;
@@ -102,6 +113,8 @@ async fn main() -> Result<()> {
 
     let (db_writer_tx, mut db_writer_rx) = mpsc::unbounded_channel::<analysis::TxAnalysisResult>();
     let (ui_tx, ui_rx) = mpsc::unbounded_channel::<UiUpdate>();
+    let (block_sender, mut block_receiver) = mpsc::unbounded_channel::<Block>();
+    let public_tx_cache = Arc::new(RwLock::new(HashSet::<(B256, Instant)>::new()));
 
     let mut network_manager = NetworkManager::new(network_config).await?;
     network_manager.set_transactions(tx_event_sender);
@@ -117,6 +130,7 @@ async fn main() -> Result<()> {
         network_handle.clone(),
         initial_head,
         decoded_tx_sender.clone(),
+        block_sender.clone(),
         ui_tx.clone(),
     );
     let handler_arc = Arc::new(event_handler);
@@ -160,18 +174,21 @@ async fn main() -> Result<()> {
     }));
     info!("Spawned Transaction Event Handler task.");
 
+    let cache_clone = public_tx_cache.clone();
     task_executor.spawn(Box::pin(async move {
         info!(target: "crawler::processor", "Starting decoded transaction processor task...");
         while let Some(tx_signed_arc) = decoded_tx_receiver.recv().await {
-            let analysis_result = analysis::analyze_transaction(&tx_signed_arc);
-            trace!(target: "crawler::processor", tx_hash = %analysis_result.hash, "Analyzed tx, sending to DB writer.");
+            cache_clone
+                .write()
+                .await
+                .insert((*tx_signed_arc.hash(), Instant::now()));
 
-            if let Err(e) = db_writer_tx.send(analysis_result) {
-                error!(target: "crawler::processor", "Failed to send tx to DB writer: {}. Receiver likely dropped.", e);
+            let analysis_result = analysis::analyze_transaction(&tx_signed_arc);
+            if db_writer_tx.send(analysis_result).is_err() {
+                error!(target: "crawler::processor", "Failed to send tx to DB writer.");
                 break;
             }
         }
-        info!(target: "crawler::processor", "Decoded transaction processor task finished.");
     }));
     info!("Spawned Decoded Transaction Processor task.");
 
@@ -192,12 +209,17 @@ async fn main() -> Result<()> {
                 max_priority_fee_wei: tx.max_priority_fee.map(|p| p.to_string()),
                 input_len: tx.input_len as i32,
                 first_seen_at: tx.first_seen_at,
+                is_private: tx.is_private,
             };
 
             let query_result = sqlx::query!(
                 r#"
-                INSERT INTO transactions (hash, tx_type, sender, receiver, value_wei, gas_limit, gas_price_or_max_fee_wei, max_priority_fee_wei, input_len, first_seen_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                INSERT INTO transactions (
+                    hash, tx_type, sender, receiver, value_wei, gas_limit, 
+                    gas_price_or_max_fee_wei, max_priority_fee_wei, input_len, 
+                    first_seen_at, is_private
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                 ON CONFLICT (hash) DO NOTHING
                 "#,
                 api_tx.hash,
@@ -209,7 +231,8 @@ async fn main() -> Result<()> {
                 api_tx.gas_price_or_max_fee_wei,
                 api_tx.max_priority_fee_wei,
                 api_tx.input_len,
-                api_tx.first_seen_at
+                api_tx.first_seen_at,
+                api_tx.is_private
             )
             .execute(&db_pool_clone)
             .await;
@@ -247,8 +270,22 @@ async fn main() -> Result<()> {
     }));
     info!("Spawned UI task.");
 
+    let oracle_collector_rx = tx_broadcaster.subscribe();
+    let collector_oracle_instance = gas_oracle.clone();
     task_executor.spawn(Box::pin(async move {
-        let app_router = create_router(app_state); 
+        collector_oracle_instance
+            .run_collector(oracle_collector_rx)
+            .await;
+    }));
+
+    let calculator_oracle_instance = gas_oracle.clone();
+    task_executor.spawn(Box::pin(async move {
+        calculator_oracle_instance.run_calculator().await;
+    }));
+    info!("Spawned Gas Oracle tasks.");
+
+    task_executor.spawn(Box::pin(async move {
+        let app_router = create_router(app_state);
         let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await.unwrap();
         info!(target: "crawler::api", "✅ API server listening on http://0.0.0.0:8000");
         axum::serve(listener, app_router).await.unwrap();
