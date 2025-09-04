@@ -4,26 +4,29 @@ use dashmap::DashMap;
 use reth::chainspec::ChainSpec;
 use reth::primitives::{Block, Head, PooledTransaction, TransactionSigned};
 use reth::revm::revm::primitives::B256;
+use reth::revm::revm::primitives::alloy_primitives::Sealable;
+use reth::tasks::TaskExecutor;
 use reth_eth_wire::{
-    EthMessage, GetPooledTransactions, NewBlock, NewBlockHashes, NewPooledTransactionHashes,
-    PooledTransactions, Status,
+GetBlockBodies, GetBlockHeaders, GetPooledTransactions,
+    NewPooledTransactionHashes, PooledTransactions, Status,
 };
-use reth_network::import::NewBlockEvent;
 use reth_network::p2p::error::RequestError;
+use reth_network::p2p::headers::client::HeadersDirection;
 use reth_network::transactions::NetworkTransactionEvent;
+use reth_network::types::BlockHashOrNumber;
 use reth_network::{NetworkHandle, PeerRequest};
 use reth_network_api::{
     NetworkEvent, PeerId,
     events::{PeerEvent, SessionInfo},
 };
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::spawn;
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
 use tracing::{debug, error, info, trace, warn};
 
 #[derive(Debug, Clone)]
-struct PeerSessionInfo {
+pub struct PeerSessionInfo {
     #[allow(dead_code)]
     status: Arc<Status>,
     session_info: Arc<SessionInfo>,
@@ -33,10 +36,9 @@ struct PeerSessionInfo {
 pub struct EthP2PHandler {
     chain_spec: Arc<ChainSpec>,
     network_handle: NetworkHandle,
-    peers: Arc<DashMap<PeerId, PeerSessionInfo>>,
+    pub peers: Arc<DashMap<PeerId, PeerSessionInfo>>,
     current_head: Head,
     decoded_tx_sender: UnboundedSender<Arc<TransactionSigned>>,
-    block_sender: UnboundedSender<Block>,
     ui_tx: UnboundedSender<UiUpdate>,
 }
 
@@ -44,19 +46,18 @@ impl EthP2PHandler {
     pub fn new(
         chain_spec: Arc<ChainSpec>,
         network_handle: NetworkHandle,
+        peers: Arc<DashMap<PeerId, PeerSessionInfo>>,
         initial_head: Head,
         decoded_tx_sender: UnboundedSender<Arc<TransactionSigned>>,
-        block_sender: UnboundedSender<Block>,
         ui_tx: UnboundedSender<UiUpdate>,
     ) -> Self {
         info!(target: "crawler::network", "Initializing EthP2PHandler.");
         Self {
             chain_spec,
             network_handle,
-            peers: Arc::new(DashMap::new()),
+            peers,
             current_head: initial_head,
             decoded_tx_sender,
-            block_sender,
             ui_tx,
         }
     }
@@ -88,6 +89,7 @@ impl EthP2PHandler {
                     session_info: Arc::new(session_info),
                 };
                 self.peers.insert(peer_id, peer_info_struct);
+                println!("[DEBUG] EthP2PHandler: Peer added! New peer count: {}", self.peers.len());
                 let connected_peers_info: Vec<PeerInfo> = self
                     .peers
                     .iter()
@@ -96,6 +98,7 @@ impl EthP2PHandler {
                         client_version: entry.value().session_info.client_version.to_string(),
                     })
                     .collect();
+                print!("Connected peers info: {:?}", connected_peers_info);
                 info!(target: "crawler::network", %peer_id, total_peers = connected_peers_info.len(), "Validated peer added to active set.");
 
                 let update_data = PeerUpdateData {
@@ -224,4 +227,71 @@ impl EthP2PHandler {
     pub fn network_handle(&self) -> NetworkHandle {
         self.network_handle.clone()
     }
+}
+
+pub fn spawn_block_poller(
+    executor: &TaskExecutor,
+    network_handle: NetworkHandle,
+    peers: Arc<DashMap<PeerId, PeerSessionInfo>>,
+    block_sender: UnboundedSender<Block>,
+) {
+    let poller_task = async move {
+        println!("[INFO] crawler::block-poller: Starting P2P block poller task...");
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+
+        let mut last_seen_block_number: u64 = 23_290_350;
+
+        loop {
+            interval.tick().await;
+
+            if let Some(peer_entry) = peers.iter().next() {
+                let peer_id = *peer_entry.key();
+                let target_block = last_seen_block_number + 1;
+
+                println!("[INFO] crawler::block-poller: Requesting block #{} from peer {}", target_block, peer_id);
+
+                let (header_tx, header_rx) = oneshot::channel();
+                let get_headers_req = PeerRequest::GetBlockHeaders {
+                    request: GetBlockHeaders {
+                        start_block: BlockHashOrNumber::Number(target_block),
+                        limit: 1,
+                        skip: 0,
+                        direction: HeadersDirection::Rising,
+                    },
+                    response: header_tx,
+                };
+                network_handle.send_request(peer_id, get_headers_req);
+
+                if let Ok(Ok(Ok(headers_res))) = tokio::time::timeout(Duration::from_secs(5), header_rx).await {
+                    if let Some(header) = headers_res.0.into_iter().next() {
+                        let block_hash = header.clone().seal_slow().hash();
+                        let (body_tx, body_rx) = oneshot::channel();
+                        let get_bodies_req = PeerRequest::GetBlockBodies {
+                            request: GetBlockBodies(vec![block_hash]),
+                            response: body_tx,
+                        };
+                        network_handle.send_request(peer_id, get_bodies_req);
+
+                        if let Ok(Ok(Ok(bodies_res))) = tokio::time::timeout(Duration::from_secs(5), body_rx).await {
+                            if let Some(body) = bodies_res.0.into_iter().next() {
+                                let full_block = Block { header, body };
+                                println!("[INFO] crawler::block-poller: ✅ Successfully fetched block #{}", full_block.number);
+                                last_seen_block_number = full_block.number;
+                                if block_sender.send(full_block).is_err() {
+                                    println!("[ERROR] crawler::block-poller: Block processor channel closed.");
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    println!("[WARN] crawler::block-poller: Request to peer {} for block #{} timed out or failed", peer_id, target_block);
+                }
+            } else {
+                println!("[INFO] crawler::block-poller: Waiting for peers to connect...");
+            }
+        }
+    };
+
+    executor.spawn(Box::pin(poller_task));
 }

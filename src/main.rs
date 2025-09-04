@@ -10,16 +10,16 @@ mod ui;
 use crate::{
     api::{ApiTransaction, AppState, create_router},
     config::{load_config, load_or_generate_key, parse_bootnodes, setup_logging},
-    network::EthP2PHandler,
+    network::{EthP2PHandler, spawn_block_poller},
     oracle::GasOracle,
     types::UiUpdate,
     ui::run_ui,
 };
+use dashmap::DashMap;
 use anyhow::Result;
 use futures_util::StreamExt;
 use reth::chainspec::{ChainSpec, MAINNET};
 use reth::network::transactions::NetworkTransactionEvent;
-use reth_network::import::NewBlockEvent;
 use reth::revm::revm::primitives::alloy_primitives::{B256, B512};
 use reth_discv4::{Discv4ConfigBuilder, NatResolver, NodeRecord};
 use reth_network::{
@@ -82,6 +82,17 @@ async fn main() -> Result<()> {
     let executor = task_manager.executor();
     info!("Task executor created.");
 
+    let (tx_event_sender, mut tx_event_receiver) =
+        mpsc::unbounded_channel::<NetworkTransactionEvent>();
+    let (decoded_tx_sender, mut decoded_tx_receiver) =
+        mpsc::unbounded_channel::<Arc<TransactionSigned>>();
+    let (db_writer_tx, mut db_writer_rx) = mpsc::unbounded_channel::<analysis::TxAnalysisResult>();
+    let (ui_tx, ui_rx) = mpsc::unbounded_channel::<UiUpdate>();
+    let (block_sender, mut block_receiver) = mpsc::unbounded_channel::<Block>();
+    let public_tx_cache = Arc::new(RwLock::new(HashSet::<(B256, Instant)>::new()));
+    let block_db_writer_tx = db_writer_tx.clone();
+    let peers = Arc::new(DashMap::new());
+
     let mut discv4_builder = Discv4ConfigBuilder::default();
     discv4_builder.add_boot_nodes(bootnodes.clone());
     info!("🔍 Discv4 behaviour configured.");
@@ -101,20 +112,11 @@ async fn main() -> Result<()> {
 
     let client = NoopProvider::<ChainSpec>::new(chain_spec.clone());
     let network_config = config_builder.build(client);
+
     info!(
         "🔧 Network configured. RLPx TCP listening on {}. Discovery UDP listening on {}. Attempting UPnP NAT.",
         app_config.p2p_listen_addr, app_config.discv4_listen_addr
     );
-
-    let (tx_event_sender, mut tx_event_receiver) =
-        mpsc::unbounded_channel::<NetworkTransactionEvent>();
-    let (decoded_tx_sender, mut decoded_tx_receiver) =
-        mpsc::unbounded_channel::<Arc<TransactionSigned>>();
-
-    let (db_writer_tx, mut db_writer_rx) = mpsc::unbounded_channel::<analysis::TxAnalysisResult>();
-    let (ui_tx, ui_rx) = mpsc::unbounded_channel::<UiUpdate>();
-    let (block_sender, mut block_receiver) = mpsc::unbounded_channel::<Block>();
-    let public_tx_cache = Arc::new(RwLock::new(HashSet::<(B256, Instant)>::new()));
 
     let mut network_manager = NetworkManager::new(network_config).await?;
     network_manager.set_transactions(tx_event_sender);
@@ -124,13 +126,15 @@ async fn main() -> Result<()> {
         network_handle.num_connected_peers()
     );
 
+    let mut events = network_handle.event_listener();
+
     let initial_head = Head::default();
     let event_handler = EthP2PHandler::new(
         chain_spec.clone(),
         network_handle.clone(),
+        peers.clone(),
         initial_head,
         decoded_tx_sender.clone(),
-        block_sender.clone(),
         ui_tx.clone(),
     );
     let handler_arc = Arc::new(event_handler);
@@ -140,7 +144,6 @@ async fn main() -> Result<()> {
     let handler_clone_for_events = Arc::clone(&handler_arc);
     task_executor.spawn(Box::pin(async move {
         info!(target: "crawler::events", "EVENT HANDLER TASK STARTED");
-        let mut events = handler_clone_for_events.network_handle().event_listener();
         loop {
             if let Some(event) = events.next().await {
                 trace!(target: "crawler::events", ?event, "Received network event object.");
@@ -283,6 +286,43 @@ async fn main() -> Result<()> {
         calculator_oracle_instance.run_calculator().await;
     }));
     info!("Spawned Gas Oracle tasks.");
+
+    spawn_block_poller(
+        &executor,
+        network_handle.clone(),
+        peers.clone(),
+        block_sender.clone(),
+    );
+    info!("Block poller spawned!");
+
+    let block_processor_cache = public_tx_cache.clone();
+
+    task_executor.spawn(Box::pin(async move {
+        info!(target: "crawler::block-processor", "Starting block processor task...");
+
+        while let Some(block) = block_receiver.recv().await {
+            info!(target: "crawler::block-processor", "⚙️ Processing new block #{}", block.header.number);
+            let mut cache = block_processor_cache.write().await;
+            let now = Instant::now();
+
+            let stale_threshold = Duration::from_secs(60);
+            cache.retain(|(_hash, seen_at)| now.duration_since(*seen_at) < stale_threshold);
+
+            for tx in block.body.transactions {
+                if !cache.iter().any(|(h, _)| h == tx.hash()) {
+                    info!(target: "crawler::block-processor", "🕵️ Found private transaction: {}", tx.hash());
+
+                    let mut analysis_result = analysis::analyze_transaction(&tx);
+                    analysis_result.is_private = true;
+
+                    if block_db_writer_tx.send(analysis_result).is_err() {
+                        error!(target: "crawler::block-processor", "Failed to send private tx to DB writer.");
+                    }
+                }
+            }
+        }
+    }));
+    info!("Spawned Block Processor task.");
 
     task_executor.spawn(Box::pin(async move {
         let app_router = create_router(app_state);
