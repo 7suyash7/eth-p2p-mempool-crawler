@@ -62,86 +62,62 @@ impl EthP2PHandler {
         }
     }
 
+    fn on_session_established(&self, session_info: Arc<SessionInfo>) {
+        let peer_id = session_info.peer_id;
+        info!(target: "crawler::network", %peer_id, client=%session_info.client_version, "Session established...");
+
+        let peer_info_struct = PeerSessionInfo {
+            status: session_info.status.clone(),
+            session_info: Arc::clone(&session_info),
+        };
+        self.peers.insert(peer_id, peer_info_struct);
+
+        println!("[DEBUG] EthP2PHandler: Peer added! New peer count: {}", self.peers.len());
+
+        let connected_peers_info: Vec<PeerInfo> = self
+            .peers
+            .iter()
+            .map(|entry| PeerInfo {
+                id: *entry.key(),
+                client_version: entry.value().session_info.client_version.to_string(),
+            })
+            .collect();
+        
+        info!(target: "crawler::network", %peer_id, total_peers = connected_peers_info.len(), "Validated peer added to active set.");
+
+        let update_data = PeerUpdateData {
+            connected_peers: connected_peers_info,
+            timestamp: Instant::now(),
+        };
+        if self.ui_tx.send(UiUpdate::PeerUpdate(update_data)).is_err() {
+            warn!(target: "crawler::network", "Failed to send peer update to UI.");
+        }
+    }
+
     pub async fn handle_network_event_wrapper(&self, event: NetworkEvent) -> Result<()> {
-        trace!(target: "crawler::handler", "**** Received NetworkEvent in Handler: {:?}", event);
+        trace!(target: "crawler::handler", "Received NetworkEvent: {:?}", event);
 
         match event {
             NetworkEvent::Peer(peer_event) => {
                 self.handle_peer_event(peer_event).await?;
             }
-
             NetworkEvent::ActivePeerSession { info, .. } => {
-                debug!(target: "crawler::network", peer_id=%info.peer_id, "Session confirmed active.");
+                self.on_session_established(info.into());
             }
         }
-
         Ok(())
     }
 
     pub async fn handle_peer_event(&self, event: PeerEvent) -> Result<()> {
         match event {
             PeerEvent::SessionEstablished(session_info) => {
-                let peer_id = session_info.peer_id;
-                info!(target: "crawler::network", %peer_id, client=%session_info.client_version, version=%session_info.status.version, "Session established...");
-
-                let peer_info_struct = PeerSessionInfo {
-                    status: session_info.status.clone(),
-                    session_info: Arc::new(session_info),
-                };
-                self.peers.insert(peer_id, peer_info_struct);
-                println!("[DEBUG] EthP2PHandler: Peer added! New peer count: {}", self.peers.len());
-                let connected_peers_info: Vec<PeerInfo> = self
-                    .peers
-                    .iter()
-                    .map(|entry| PeerInfo {
-                        id: *entry.key(),
-                        client_version: entry.value().session_info.client_version.to_string(),
-                    })
-                    .collect();
-                print!("Connected peers info: {:?}", connected_peers_info);
-                info!(target: "crawler::network", %peer_id, total_peers = connected_peers_info.len(), "Validated peer added to active set.");
-
-                let update_data = PeerUpdateData {
-                    connected_peers: connected_peers_info,
-                    timestamp: Instant::now(),
-                };
-                debug!(target: "crawler::sender", "Sending PeerUpdate (Established): {} peers", update_data.connected_peers.len());
-                if let Err(e) = self.ui_tx.send(UiUpdate::PeerUpdate(update_data)) {
-                    warn!(target: "crawler::network", "Failed to send peer update to UI: {}", e);
-                }
+                self.on_session_established(Arc::new(session_info));
             }
             PeerEvent::SessionClosed { peer_id, reason } => {
                 info!(target: "crawler::network", %peer_id, ?reason, "Session closed");
-                let mut removed = false;
-                if self.peers.remove(&peer_id).is_some() {
-                    removed = true;
-                }
-                let connected_peers_info: Vec<PeerInfo> = self
-                    .peers
-                    .iter()
-                    .map(|entry| PeerInfo {
-                        id: *entry.key(),
-                        client_version: entry.value().session_info.client_version.to_string(),
-                    })
-                    .collect();
-                if removed {
-                    info!(target: "crawler::network", %peer_id, total_peers = connected_peers_info.len(), "Peer removed from active set.");
-                }
-                let update_data = PeerUpdateData {
-                    connected_peers: connected_peers_info,
-                    timestamp: Instant::now(),
-                };
-                debug!(target: "crawler::sender", "Sending PeerUpdate (Closed): {} peers", update_data.connected_peers.len());
-                if let Err(e) = self.ui_tx.send(UiUpdate::PeerUpdate(update_data)) {
-                    warn!(target: "crawler::network", "Failed to send peer update to UI: {}", e);
-                }
+                self.peers.remove(&peer_id);
             }
-            PeerEvent::PeerAdded(peer_id) => {
-                debug!(target: "crawler::network::discovery", %peer_id, "Peer added to address book");
-            }
-            PeerEvent::PeerRemoved(peer_id) => {
-                debug!(target: "crawler::network::discovery", %peer_id, "Peer removed from address book");
-            }
+            _ => {}
         }
         Ok(())
     }
@@ -222,10 +198,6 @@ impl EthP2PHandler {
             }
         }
         Ok(())
-    }
-
-    pub fn network_handle(&self) -> NetworkHandle {
-        self.network_handle.clone()
     }
 }
 
