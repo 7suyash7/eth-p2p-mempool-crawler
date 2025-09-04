@@ -30,8 +30,15 @@ A small note here, it says 0 peers because while testing I connected to a kind p
     * Sends `GetPooledTransactions` requests for specific hashes.
     * Processes `PooledTransactions` responses (full transactions requested).
     * Processes `Transactions` messages (full transactions broadcast directly).
+* **Block Fetching:** A dedicated poller task actively requests headers and bodies for new blocks from peers, allowing the crawler to follow the chain head.
 * **Transaction Processing:** Decodes received transaction data (`PooledTransaction`, `TransactionSigned`) into the standard `reth_primitives::TransactionSigned` format.
 * **Basic Analysis:** Extracts key information like sender (via recovery), receiver, value, gas limit, gas price/fees, and transaction type.
+* **Database Persistence:** All analyzed transactions (both public and private) are stored in a PostgreSQL database, enabling historical analysis and queries.
+* **Real-time API & Gas Oracle**:
+    * An axum-based web server provides a WebSocket (/ws) to stream new transactions and REST endpoints to query the database.
+
+    * A simple gas oracle calculates fee estimates based on recent mempool activity.
+
 * **Live TUI Dashboard:** The TUI displays:
     * Real-time statistics (Total Txs Seen, breakdown by type).
     * Connected peer list with client information.
@@ -53,6 +60,8 @@ Or:
 
 * **Core Language:** [Rust](https://www.rust-lang.org/)
 * **Asynchronous Runtime:** [Tokio](https://tokio.rs/)
+* **Database**: `PostgreSQL` with `sqlx` for asynchronous queries and migrations.
+* **API**: `axum` for the web server and WebSocket handling.
 * **Ethereum P2P & Primitives:** [Reth](https://github.com/paradigmxyz/reth) Libraries:
     * `reth-network`: Core P2P session management, RLPx transport, `NetworkManager`.
     * `reth-discv4`: Kademlia-based Discovery v4 implementation.
@@ -95,6 +104,9 @@ This crawler operates as a standalone asynchronous application, leveraging sever
     * **Core Network Task:** Runs the `reth_network::NetworkManager` future, handling low-level connection management and protocol multiplexing.
     * **Peer Event Handler Task:** Listens for general network events (peer added/removed, session established/closed) emitted by `NetworkManager` and managed by our `EthP2PHandler`. Sends updates to the UI task.
     * **Transaction Event Handler Task:** Listens specifically for `NetworkTransactionEvent`s emitted by `NetworkManager` (forwarded via an MPSC channel). This task, managed by our `EthP2PHandler`, processes incoming transaction messages and sends successfully decoded/converted data to the Processor Task.
+    * **Block Poller & Processor Tasks:** A dedicated task polls peers for new blocks. Upon receiving a block, another task processes its transactions, comparing them against the public mempool cache to identify and flag private transactions before sending them to the database writer.
+    * **Database Writer Task**: A central task that receives transaction analysis results from both the mempool and block processors and writes them asynchronously to the PostgreSQL database.
+    * **API Server & Gas Oracle Tasks**: Runs the axum web server and the background tasks for collecting gas fee data and calculating estimates.
     * **Decoded Tx Processor Task:** Receives `Arc<TransactionSigned>` objects from the Tx Event Handler, calls the `analysis::analyze_transaction` function, and sends the `TxAnalysisResult` to the UI task.
     * **UI Task:** Runs the main TUI loop (`ui::run_ui`), handling terminal drawing, user input ('q' to quit, Arrow keys for scrolling), and processing updates received from other tasks via the `ui_update` channel.
 
@@ -189,7 +201,8 @@ The order of precedence is: CLI Arguments > Environment Variables > Config File 
     * Basic MEV hints (flag high priority fees, known DEX router interactions, simple sandwich/arbitrage patterns).
     * Decode transaction input data for known contract ABIs.
 * [ ] **Persistence:**
-    * Add option to save `TxAnalysisResult` data to a database (e.g., SQLite via `sqlx`) for historical analysis.
+    * Save `TxAnalysisResult` data to a database.
+    * Add more advanced database queries and analytics endpoints to the API.
 * [ ] **Networking Improvements:**
     * Implement dynamic ForkID validation using periodically updated chain head info (potentially via light-client mechanisms or trusted RPC).
     * More robust peer management and scoring.
