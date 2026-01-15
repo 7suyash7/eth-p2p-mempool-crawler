@@ -46,17 +46,7 @@ A small note here, it says 0 peers because while testing I connected to a kind p
 * **Configuration:** Uses a `config.toml` file for settings like listener addresses, peer limits, node key path, and logging verbosity (with CLI overrides).
 * **File Logging:** Outputs detailed operational logs to `./logs/crawler.log` using `tracing`.
 
-## 📸 Demo
-
-*(Insert your awesome TUI screenshot or GIF here!)*
-
-E.g.:
-![Crawler TUI Screenshot](path/to/your/screenshot.png)
-
-Or:
-[![Crawler TUI Demo GIF](path/to/your/preview_static.png)](path/to/your/demo.gif)
-
-## 🛠️ Technology Stack
+## Technology Stack
 
 * **Core Language:** [Rust](https://www.rust-lang.org/)
 * **Asynchronous Runtime:** [Tokio](https://tokio.rs/)
@@ -88,7 +78,7 @@ Or:
 * **Concurrency:** `dashmap` (for thread-safe peer map in handler)
 * **Number Formatting:** `num-format` (for TUI display)
 
-## ⚙️ How It Works
+## How It Works
 
 This crawler operates as a standalone asynchronous application, leveraging several key components and concepts:
 
@@ -139,7 +129,7 @@ This crawler operates as a standalone asynchronous application, leveraging sever
     * It uses `alloy-consensus` types (via `reth-primitives`) for transaction structure definitions (`TxEnvelope`, `TxLegacy`, etc.).
     * Custom logic for handling events, analyzing data, and building the UI is added *on top* of these Reth libraries.
 
-## 🚀 Setup & Installation
+## Setup & Installation
 
 1.  **Prerequisites:** Ensure you have a recent Rust toolchain installed (https://rustup.rs/).
 2.  **Clone the Repository and just run:
@@ -147,7 +137,7 @@ This crawler operates as a standalone asynchronous application, leveraging sever
 cargo build --release
 ```
 
-## ⚙️ Configuration
+## Configuration
 
 The crawler is configured primarily via a `config.toml` file.
 
@@ -181,7 +171,7 @@ The order of precedence is: CLI Arguments > Environment Variables > Config File 
     ```
 4.  The TUI should launch, displaying the dashboard.
 5.  Detailed logs will be written to files in the `./logs/` directory (e.g., `crawler.log.YYYY-MM-DD`).
-6.  **To Quit:** Press `q` while the TUI is focused, or send a Ctrl+C signal to the process in the terminal where you launched it.
+6.  **To Quit:** Press `q`, or send a Ctrl+C signal to the process in the terminal where you launched it.
 
 ## Limitations
 
@@ -189,20 +179,3 @@ The order of precedence is: CLI Arguments > Environment Variables > Config File 
 * **ForkID Validation:** Currently basic. Uses a default `Head` and doesn't validate against the live chain tip, potentially allowing connections to peers on incompatible forks (though they would likely disconnect quickly).
 * **Peer Stability:** Connections can be transient, especially since this node doesn't participate in full block/state sync. The displayed peer list reflects the current active sessions.
 
-## 🚀 Future Work
-
-* [ ] **TUI Enhancements:**
-    * Implement peer list scrolling/selection in the Peer Panel.
-    * Display more peer details (address, latency, protocols).
-    * Implement transaction selection in the table to show full details/analysis in a separate panel.
-    * Add more detailed statistics (e.g., average gas prices over time, tx throughput).
-* [ ] **Deeper Analysis:**
-    * Identify contract creation transactions explicitly.
-    * Basic MEV hints (flag high priority fees, known DEX router interactions, simple sandwich/arbitrage patterns).
-    * Decode transaction input data for known contract ABIs.
-* [ ] **Persistence:**
-    * Save `TxAnalysisResult` data to a database.
-    * Add more advanced database queries and analytics endpoints to the API.
-* [ ] **Networking Improvements:**
-    * Implement dynamic ForkID validation using periodically updated chain head info (potentially via light-client mechanisms or trusted RPC).
-    * More robust peer management and scoring.
